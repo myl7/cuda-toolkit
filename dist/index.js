@@ -81267,9 +81267,24 @@ async function getDownloadURL(method, version) {
     }
 }
 
+// Convert a version string to SemVer. Full semver strings parse exactly; a
+// major.minor (or major) pin is padded to .0 and flagged so the caller can
+// resolve it to the newest listed patch of the series instead.
+function parseVersion(versionString) {
+    try {
+        return { version: new semverExports.SemVer(versionString), pinned: false };
+    }
+    catch {
+        const coerced = semverExports.coerce(versionString);
+        if (coerced === null) {
+            throw new TypeError(`Invalid Version: ${versionString}`);
+        }
+        return { version: coerced, pinned: true };
+    }
+}
 // Helper for converting string to SemVer and verifying it exists in the links
 async function getVersion(versionString, method) {
-    const version = new semverExports.SemVer(versionString);
+    const { version, pinned } = parseVersion(versionString);
     const links = await getLinks();
     let versions;
     switch (method) {
@@ -81288,14 +81303,23 @@ async function getVersion(versionString, method) {
             }
     }
     coreExports.debug(`Available versions: ${versions}`);
-    if (versions.find((v) => v.compare(version) === 0) !== undefined) {
+    if (pinned) {
+        // A major.minor pin floats to the newest listed patch of the same series,
+        // matching how apt resolves cuda-nvcc-<major>-<minor> on network installs.
+        const newest = versions
+            .filter((v) => v.major === version.major && v.minor === version.minor)
+            .reduce((newest, v) => (newest === undefined || v.compare(newest) > 0 ? v : newest), undefined);
+        if (newest !== undefined) {
+            coreExports.debug(`Version pin ${version} resolves to: ${newest}`);
+            return newest;
+        }
+    }
+    else if (versions.find((v) => v.compare(version) === 0) !== undefined) {
         coreExports.debug(`Version available: ${version}`);
         return version;
     }
-    else {
-        coreExports.debug(`Version not available error!`);
-        throw new Error(`Version not available: ${version}`);
-    }
+    coreExports.debug(`Version not available error!`);
+    throw new Error(`Version not available: ${version}`);
 }
 
 var artifact$1 = {};
